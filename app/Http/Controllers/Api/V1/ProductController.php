@@ -80,22 +80,28 @@ class ProductController extends Controller
 
     public function bulkImport(Request $request): JsonResponse
     {
-        $request->validate(['file' => 'required|file|mimes:xlsx,xls,csv|max:5120']);
+        $request->validate(['file' => 'required|file|mimes:csv,txt|max:5120']);
         $tenant = $request->attributes->get('tenant');
 
         try {
-            $rows = \Maatwebsite\Excel\Facades\Excel::toArray([], $request->file('file'));
-            $data = $rows[0] ?? [];
-            if (empty($data)) {
+            $path = $request->file('file')->getRealPath();
+            $handle = fopen($path, 'r');
+            if (!$handle) {
+                return $this->error('Could not read file');
+            }
+
+            $headers = array_map('strtolower', array_map('trim', fgetcsv($handle) ?: []));
+            if (empty($headers)) {
+                fclose($handle);
                 return $this->error('File is empty');
             }
 
-            $headers = array_map('strtolower', array_map('trim', $data[0]));
             $mappedRows = [];
-            for ($i = 1; $i < count($data); $i++) {
-                $row = array_combine($headers, $data[$i]);
-                if ($row) $mappedRows[] = $row;
+            while (($row = fgetcsv($handle)) !== false) {
+                $combined = array_combine($headers, $row);
+                if ($combined) $mappedRows[] = $combined;
             }
+            fclose($handle);
 
             $result = $this->inventoryService->bulkImportFromArray($tenant, $mappedRows);
             return $this->success($result, "Import complete: {$result['imported']} imported");
